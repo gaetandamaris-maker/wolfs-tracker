@@ -48,7 +48,7 @@ def n(v):
 
 
 def alleger(m):
-    clubs = {cid: {"goals": c.get("goals"), "winnerByDnf": c.get("winnerByDnf"), "details": {"name": (c.get("details") or {}).get("name")}}
+    clubs = {cid: {"goals": c.get("goals"), "winnerByDnf": c.get("winnerByDnf"), "TEAM": c.get("TEAM"), "details": {"name": (c.get("details") or {}).get("name")}}
              for cid, c in (m.get("clubs") or {}).items()}
     agg = {cid: (a if cid == CLUB_ID else {"goals": a.get("goals")}) for cid, a in (m.get("aggregate") or {}).items()}
     return {"matchId": m["matchId"], "timestamp": m["timestamp"], "clubs": clubs,
@@ -79,6 +79,18 @@ def envoyer_sheet(donnees):
 
 
 # ---------------------------------------------------------------- résumés
+DISCORD_TYPES = {"Tournoi"}   # seuls les tournois (amicaux EA) sont postés sur Discord
+CREST = "https://eafc24.content.easports.com/fifa/fltOnlineAssets/24B23FDE-7835-41C2-87A2-F453DFDB2E82/2024/fcweb/crests/256x256/l{}.png"
+NOTRE_ECUSSON = CREST.format("99160204")
+JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+VERT, ROUGE, OR, AMBRE = 0x2F9E6C, 0xDB1012, 0xC9A227, 0xFEA40B
+
+
+def quand(ts, avec_jour=True):
+    d = datetime.fromtimestamp(ts, PARIS)
+    return (f"{JOURS[d.weekday()]} {d:%d/%m} · " if avec_jour else "") + f"{d:%Hh%M}"
+
+
 def score_reel(m):
     me = m["clubs"].get(CLUB_ID, {})
     adv_id = next((k for k in m["clubs"] if k != CLUB_ID), "")
@@ -87,61 +99,95 @@ def score_reel(m):
     forfait = ""
     a1, a2 = m["aggregate"].get(CLUB_ID), m["aggregate"].get(adv_id)
     if a1 and a2 and (bp, bc) in ((3, 0), (0, 3)) and (int(n(a1.get("goals"))), int(n(a2.get("goals")))) != (bp, bc):
-        forfait = f"Forfait (score EA {bp}-{bc})"
+        forfait = f"EA a inscrit {bp}-{bc} après un abandon : score réel affiché"
         bp, bc = int(n(a1.get("goals"))), int(n(a2.get("goals")))
     return bp, bc, (adv.get("details") or {}).get("name") or adv_id, forfait
+
+
+def ecusson_adv(m):
+    adv_id = next((k for k in m["clubs"] if k != CLUB_ID), "")
+    team = m["clubs"].get(adv_id, {}).get("TEAM")
+    return CREST.format(team) if team else None
 
 
 def joueurs(m):
     out = []
     for p in m["players"].get(CLUB_ID, {}).values():
         out.append({"n": p.get("playername", "?"), "note": n(p.get("rating")), "b": int(n(p.get("goals"))), "pd": int(n(p.get("assists"))),
+                    "pt": int(n(p.get("passattempts"))), "pr": int(n(p.get("passesmade"))),
+                    "tt": int(n(p.get("tackleattempts"))), "tr": int(n(p.get("tacklesmade"))),
                     "mom": p.get("mom") == "1", "arch": ARCH.get(int(n(p.get("archetypeid"))), "")})
     return sorted(out, key=lambda x: -x["note"])
 
 
+def pastille(bp, bc):
+    return "🟩" if bp > bc else "🟥" if bp < bc else "🟨"
+
+
+def liste_noms(js, cle):
+    l = [f'{j["n"]}' + (f' ({j[cle]})' if j[cle] > 1 else "") for j in js if j[cle]]
+    return ", ".join(l) if l else "—"
+
+
+def tableau(lignes, entete):
+    return "```\n" + entete + "\n" + "\n".join(lignes) + "\n```"
+
+
 def embed_match(m, typ):
     bp, bc, adv, forfait = score_reel(m)
-    res = "Victoire" if bp > bc else "Défaite" if bp < bc else "Nul"
-    couleur = 0x2F9E6C if bp > bc else 0xC7363B if bp < bc else 0xC9A227
+    res, couleur = ("VICTOIRE", VERT) if bp > bc else ("DÉFAITE", ROUGE) if bp < bc else ("MATCH NUL", OR)
     js = joueurs(m)
     hdm = next((j for j in js if j["mom"]), None)
-    buteurs = ", ".join(f'{j["n"]} ×{j["b"]}' if j["b"] > 1 else j["n"] for j in js if j["b"]) or "—"
-    passeurs = ", ".join(f'{j["n"]} ×{j["pd"]}' if j["pd"] > 1 else j["n"] for j in js if j["pd"]) or "—"
-    top = "\n".join(f'`{j["note"]:.1f}` {j["n"]}' + (f' · {j["arch"]}' if j["arch"] else "") for j in js[:3]) or "—"
-    champs = [{"name": "Buteurs", "value": buteurs, "inline": True}, {"name": "Passeurs", "value": passeurs, "inline": True},
-              {"name": "Top 3 des notes", "value": top, "inline": False}]
-    if hdm:
-        champs.insert(0, {"name": "Homme du match", "value": f'⭐ {hdm["n"]} ({hdm["note"]:.1f})', "inline": False})
+    pt = sum(j["pt"] for j in js); pr = sum(j["pr"] for j in js); tt = sum(j["tt"] for j in js); tr = sum(j["tr"] for j in js)
+    desc = f"## {pastille(bp, bc)} {res}\n# WOLfS  {bp} - {bc}  {adv}\n-# {typ} · {quand(m['timestamp'])}"
     if forfait:
-        champs.append({"name": "Attention", "value": forfait, "inline": False})
-    return {"title": f"{res} {bp}-{bc} contre {adv}", "description": f"{typ} · X2RUE PLK WOLfS", "color": couleur,
-            "fields": champs, "timestamp": datetime.fromtimestamp(m["timestamp"], timezone.utc).isoformat()}
+        desc += f"\n> ⚠️ {forfait}"
+    champs = []
+    if hdm:
+        champs.append({"name": "⭐ Homme du match", "value": f'**{hdm["n"]}** · note **{hdm["note"]:.1f}**' + (f' · {hdm["b"]} but(s)' if hdm["b"] else "") + (f' · {hdm["pd"]} passe(s) D' if hdm["pd"] else ""), "inline": False})
+    champs += [{"name": "⚽ Buteurs", "value": liste_noms(js, "b"), "inline": True},
+               {"name": "🎯 Passeurs", "value": liste_noms(js, "pd"), "inline": True}]
+    lignes = [f'{j["note"]:>4.1f}  {j["n"][:15]:<15} {j["b"]:>1} {j["pd"]:>2}  {j["pr"]:>2}/{j["pt"]:<2}' + (" ★" if j["mom"] else "") for j in js]
+    if lignes:
+        champs.append({"name": "📋 Feuille de match", "value": tableau(lignes, "NOTE  JOUEUR          B PD  PASSES"), "inline": False})
+    champs.append({"name": "📊 Équipe", "value": f"Passes **{pr}/{pt}**" + (f" ({round(pr / pt * 100)} %)" if pt else "") + f" · Tacles **{tr}/{tt}**", "inline": False})
+    e = {"author": {"name": "X2RUE PLK WOLfS", "icon_url": NOTRE_ECUSSON}, "description": desc, "color": couleur, "fields": champs,
+         "footer": {"text": "Tracker Wolfs · stats officielles EA", "icon_url": NOTRE_ECUSSON},
+         "timestamp": datetime.fromtimestamp(m["timestamp"], timezone.utc).isoformat()}
+    ec = ecusson_adv(m)
+    if ec:
+        e["thumbnail"] = {"url": ec}
+    return e
 
 
 def embed_bilan(session):
     session = sorted(session, key=lambda x: x[1]["timestamp"])
-    v = d = nu = bp_t = bc_t = 0
-    perf = {}
+    v = d = nu = bp_t = bc_t = cs = 0
+    perf, resultats, serie = {}, [], ""
     for typ, m in session:
-        bp, bc, _, _ = score_reel(m)
-        bp_t += bp; bc_t += bc
+        bp, bc, adv, forfait = score_reel(m)
+        bp_t += bp; bc_t += bc; cs += bc == 0
         v += bp > bc; d += bp < bc; nu += bp == bc
+        serie += pastille(bp, bc)
+        resultats.append(f"{pastille(bp, bc)} `{bp}-{bc}` {adv}" + (" · *forfait*" if forfait else ""))
         for j in joueurs(m):
             s = perf.setdefault(j["n"], {"mj": 0, "note": 0, "b": 0, "pd": 0, "mom": 0})
             s["mj"] += 1; s["note"] += j["note"]; s["b"] += j["b"]; s["pd"] += j["pd"]; s["mom"] += j["mom"]
     classes = sorted(perf.items(), key=lambda kv: -(kv[1]["note"] / kv[1]["mj"]))
-    joueur_soir = classes[0] if classes else None
-    lignes = "\n".join(f'`{s["note"]/s["mj"]:.2f}` {nom} · {s["mj"]} MJ · {s["b"]} B · {s["pd"]} PD' for nom, s in classes[:5])
-    debut = datetime.fromtimestamp(session[0][1]["timestamp"], PARIS).strftime("%d/%m %Hh%M")
-    fin = datetime.fromtimestamp(session[-1][1]["timestamp"], PARIS).strftime("%Hh%M")
-    champs = [{"name": "Bilan", "value": f"**{v}V {nu}N {d}D** · {bp_t} buts marqués, {bc_t} encaissés", "inline": False}]
-    if joueur_soir:
-        nom, s = joueur_soir
-        champs.append({"name": "Joueur de la soirée", "value": f'🏆 {nom} : {s["note"]/s["mj"]:.2f} de moyenne, {s["b"]} but(s), {s["pd"]} passe(s) D', "inline": False})
-    champs.append({"name": "Classement de la soirée (note moyenne)", "value": lignes or "—", "inline": False})
-    return {"title": f"Bilan de la session · {len(session)} match(s)", "description": f"Du {debut} à {fin}",
-            "color": 0xFEA40B, "fields": champs}
+    couleur = VERT if v > d else ROUGE if d > v else AMBRE
+    debut, fin = quand(session[0][1]["timestamp"]), quand(session[-1][1]["timestamp"], False)
+    desc = f"## 🏁 BILAN DU TOURNOI\n# {v}V · {nu}N · {d}D\n{serie}\n-# {debut} → {fin} · {len(session)} match(s)"
+    champs = [{"name": "📅 Résultats", "value": "\n".join(resultats)[:1024], "inline": False}]
+    if classes:
+        nom, s = classes[0]
+        champs.append({"name": "🏆 Joueur du tournoi", "value": f'**{nom}** · **{s["note"]/s["mj"]:.2f}** de moyenne sur {s["mj"]} match(s)'
+                       + (f' · {s["b"]} but(s)' if s["b"] else "") + (f' · {s["pd"]} passe(s) D' if s["pd"] else "") + (f' · {s["mom"]}× homme du match' if s["mom"] else ""), "inline": False})
+        lignes = [f'{i+1:>2}. {nm[:15]:<15} {st["note"]/st["mj"]:>4.2f} {st["mj"]:>2} {st["b"]:>2} {st["pd"]:>2}' for i, (nm, st) in enumerate(classes[:8])]
+        champs.append({"name": "📋 Classement (note moyenne)", "value": tableau(lignes, "    JOUEUR          NOTE MJ  B PD"), "inline": False})
+    champs.append({"name": "📊 Totaux", "value": f"**{bp_t}** buts marqués · **{bc_t}** encaissés · **{cs}** clean sheet(s)", "inline": False})
+    return {"author": {"name": "X2RUE PLK WOLfS", "icon_url": NOTRE_ECUSSON}, "description": desc, "color": couleur, "fields": champs,
+            "footer": {"text": "Tracker Wolfs · stats officielles EA", "icon_url": NOTRE_ECUSSON},
+            "thumbnail": {"url": NOTRE_ECUSSON}}
 
 
 def discord(embeds):
@@ -172,10 +218,11 @@ def un_tour(etat):
         envoyer_sheet(donnees)
     embeds = []
     if etat["init"]:
-        embeds += [embed_match(m, t) for t, m in nouveaux]
+        embeds += [embed_match(m, t) for t, m in nouveaux if t in DISCORD_TYPES]
     for t, m in nouveaux:
         etat["vus"].append(m["matchId"])
-        etat["session"].append({"t": t, "m": m})
+        if t in DISCORD_TYPES:
+            etat["session"].append({"t": t, "m": m})
     etat["vus"] = etat["vus"][-300:]
     # fin de soirée : plus de match depuis FIN_SESSION_MIN minutes
     if etat["session"]:
@@ -207,15 +254,15 @@ def main():
         if not os.environ.get("DISCORD_WEBHOOK"):
             print("Secret DISCORD_WEBHOOK absent"); sys.exit(1)
         donnees = recuperer()
-        tous = sorted([(TYPES[t], m) for t in TYPES for m in donnees[t]], key=lambda x: x[1]["timestamp"])
+        tous = sorted([(TYPES[t], m) for t in TYPES for m in donnees[t] if TYPES[t] in DISCORD_TYPES], key=lambda x: x[1]["timestamp"])
         # dernière soirée : matchs séparés de moins de 45 min du précédent
         soiree = [tous[-1]]
         for t, m in reversed(tous[:-1]):
             if soiree[0][1]["timestamp"] - m["timestamp"] > FIN_SESSION_MIN * 60:
                 break
             soiree.insert(0, (t, m))
-        e1 = embed_match(tous[-1][1], tous[-1][0]); e1["title"] = "TEST · " + e1["title"]
-        e2 = embed_bilan(soiree); e2["title"] = "TEST · " + e2["title"]
+        e1 = embed_match(tous[-1][1], tous[-1][0]); e1["title"] = "🧪 Message de test"
+        e2 = embed_bilan(soiree); e2["title"] = "🧪 Message de test"
         discord([e1, e2])
         print(f"Discord : 2 messages de test envoyés (soirée de {len(soiree)} matchs)")
         return
