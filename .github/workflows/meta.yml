@@ -34,4 +34,4 @@ jobs:
           git fetch origin meta-donnees 2>/dev/null && git checkout meta-donnees 2>/dev/null || git checkout --orphan meta-donnees
           git rm -rq --cached . 2>/dev/null || true
           cp /tmp/meta.json meta.json
-          git add meta.json && git commit -qm "Méta du $(date -u +%F)" && git push -q origin HEAD:meta-donnees
+          git add -f meta.json && git commit -qm "Méta du $(date -u +%F)" && git push -q origin HEAD:meta-donnees
