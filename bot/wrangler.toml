@@ -1,0 +1,12 @@
+name = "wolfs-bot"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+workers_dev = true
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf"]
+fallthrough = true

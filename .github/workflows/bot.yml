@@ -1,0 +1,85 @@
+name: Bot Discord
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["bot/**", ".github/workflows/bot.yml"]
+
+concurrency:
+  group: bot
+  cancel-in-progress: false
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: bot
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      DISCORD_APP_ID: ${{ secrets.DISCORD_APP_ID }}
+      DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+      APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+      CLE_EXTENSION: ${{ secrets.CLE_EXTENSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Dépendances et polices
+        run: |
+          npm install --no-audit --no-fund
+          mkdir -p fonts
+          for f in barlow/Barlow-Bold.ttf barlow/Barlow-SemiBold.ttf barlowcondensed/BarlowCondensed-ExtraBold.ttf; do
+            curl -fsSL -o "fonts/$(basename $f)" "https://raw.githubusercontent.com/google/fonts/main/ofl/$f"
+          done
+          ls -la fonts
+
+      - name: Test de l'image de compo
+        run: node scripts/test-rendu.mjs
+
+      - name: Test de la logique du bot
+        run: node --test scripts/bot.test.mjs
+
+      - name: Compilation (sans déployer)
+        run: npx wrangler deploy --dry-run --outdir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compo-test
+          path: bot/dist/compo-test.png
+
+      - name: Déploiement sur Cloudflare
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$DISCORD_TOKEN" ]; then
+            echo "Secrets Cloudflare / Discord absents : déploiement ignoré."; exit 0
+          fi
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+          SUB=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API" | jq -r '.result.subdomain // empty')
+          if [ -z "$SUB" ]; then
+            SUB="wolfs-$(echo "$CLOUDFLARE_ACCOUNT_ID" | cut -c1-6)"
+            echo "Création du sous-domaine workers.dev : $SUB"
+            curl -s -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" -d "{\"subdomain\":\"$SUB\"}" "$API" | jq -c '.success, .errors'
+          fi
+          npx wrangler deploy
+          jq -n --arg t "$DISCORD_TOKEN" --arg a "$DISCORD_APP_ID" --arg k "$DISCORD_PUBLIC_KEY" --arg u "$APPS_SCRIPT_URL" --arg c "$CLE_EXTENSION" \
+            '{DISCORD_TOKEN:$t, DISCORD_APP_ID:$a, DISCORD_PUBLIC_KEY:$k, APPS_SCRIPT_URL:$u, CLE:$c}' > secrets.json
+          npx wrangler secret bulk secrets.json
+          rm -f secrets.json
+          echo "BOT_URL=https://wolfs-bot.$SUB.workers.dev" >> "$GITHUB_ENV"
+
+      - name: Commandes Discord et adresse des interactions
+        run: |
+          if [ -z "$BOT_URL" ]; then echo "Pas de déploiement : étape ignorée."; exit 0; fi
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$BOT_URL" >/dev/null; then break; fi
+            echo "Le Worker n'est pas encore joignable, nouvel essai dans 20 s"; sleep 20
+          done
+          sleep 5
+          for i in 1 2 3; do node scripts/commandes.mjs && exit 0; sleep 20; done
+          exit 1

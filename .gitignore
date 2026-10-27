@@ -1,2 +1,6 @@
 etat.json
 __pycache__/
+bot/node_modules/
+bot/dist/
+bot/fonts/*.ttf
+bot/.wrangler/
