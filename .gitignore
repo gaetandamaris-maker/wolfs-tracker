@@ -4,3 +4,4 @@ bot/node_modules/
 bot/dist/
 bot/fonts/*.ttf
 bot/.wrangler/
+meta.json

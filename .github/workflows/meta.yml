@@ -1,0 +1,37 @@
+name: Méta du jour
+# Chaque matin : archétypes, tailles et OVR qui gagnent chez les meilleurs clubs croisés (heure UTC).
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      copie:
+        description: "Garder une copie (meta.json) sur la branche meta-donnees"
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: meta
+  cancel-in-progress: false
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Calculer et envoyer la méta
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          CLE_EXTENSION: ${{ secrets.CLE_EXTENSION }}
+        run: python3 tracker.py --meta
+      - name: Copie sur la branche meta-donnees
+        if: always() && github.event.inputs.copie == 'true'
+        run: |
+          [ -f meta.json ] || exit 0
+          cp meta.json /tmp/meta.json
+          git config user.name "Tracker Wolfs"; git config user.email "tracker@users.noreply.github.com"
+          git fetch origin meta-donnees 2>/dev/null && git checkout meta-donnees 2>/dev/null || git checkout --orphan meta-donnees
+          git rm -rq --cached . 2>/dev/null || true
+          cp /tmp/meta.json meta.json
+          git add meta.json && git commit -qm "Méta du $(date -u +%F)" && git push -q origin HEAD:meta-donnees

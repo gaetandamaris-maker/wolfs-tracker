@@ -9,6 +9,7 @@ Options :
   --test           vérifie seulement qu'EA répond depuis ce serveur
   --envoi          renvoie au Sheet tous les matchs encore disponibles chez EA
   --bulletin       poste le bulletin de la semaine passée sur Discord
+  --meta           calcule la méta du jour (archétypes, tailles, OVR des meilleurs clubs croisés)
   --boucle MIN     reste actif MIN minutes et vérifie toutes les 2 minutes
 """
 import json, os, sys, time, urllib.parse, urllib.request, urllib.error
@@ -294,6 +295,86 @@ def bulletin():
     print(f"Bulletin posté : {b['matchs']} match(s) du {b['debut']} au {b['fin']}")
 
 
+# ---------------------------------------------------------------- méta (chaque jour)
+def meta(max_clubs=70, elite=25):
+    """Ce que jouent les meilleurs clubs croisés autour de nous : archétype, taille, OVR, note et victoires par ligne.
+    On part de nos adversaires, puis de leurs adversaires (les mieux classés d'abord), et on garde les clubs au meilleur skill rating."""
+    vus, file, infos, matchs_club = set(), [], {}, {}
+    def note_club(cid):
+        o = (ea(f"clubs/overallStats?platform={PLATEFORME}&clubIds={cid}") or [{}])[0]
+        return n(o.get("skillRating"))
+    def matchs_de(cid):
+        out = []
+        for t in ("leagueMatch", "playoffMatch"):
+            try:
+                out += ea(f"clubs/matches?platform={PLATEFORME}&clubIds={cid}&matchType={t}&maxResultCount=10") or []
+            except Exception as e:
+                print("matchs", cid, e)
+            time.sleep(0.6)
+        return out
+    for m in matchs_de(CLUB_ID):
+        for k in m.get("clubs", {}):
+            if k != CLUB_ID and k not in vus:
+                vus.add(k); file.append(k)
+    vus.add(CLUB_ID)
+    while file and len(infos) < max_clubs:
+        # on explore d'abord les clubs les mieux notés déjà connus
+        file.sort(key=lambda c: -infos.get(c, {}).get("skill", 0))
+        cid = file.pop(0)
+        try:
+            skill = note_club(cid); time.sleep(0.5)
+            ms = matchs_de(cid)
+        except Exception as e:
+            print("club", cid, e); continue
+        infos[cid] = {"skill": skill}
+        matchs_club[cid] = ms
+        for m in ms:
+            for k, c in m.get("clubs", {}).items():
+                if k not in vus:
+                    vus.add(k); file.append(k)
+    top = sorted(infos, key=lambda c: -infos[c]["skill"])[:elite]
+    print(f"Méta : {len(infos)} clubs explorés, élite = {len(top)} clubs (skill {infos[top[-1]]['skill'] if top else 0} à {infos[top[0]]['skill'] if top else 0})")
+    stats, nb_matchs = {}, 0
+    for cid in top:
+        tailles = {}
+        try:
+            for mb in (ea(f"members/stats?platform={PLATEFORME}&clubId={cid}") or {}).get("members", []):
+                tailles[mb.get("name")] = (n(mb.get("proHeight")), n(mb.get("proOverall")))
+            time.sleep(0.5)
+        except Exception as e:
+            print("membres", cid, e)
+        for m in matchs_club.get(cid, []):
+            js = (m.get("players") or {}).get(cid) or {}
+            adv = next((k for k in m.get("clubs", {}) if k != cid), None)
+            if not js or not adv:
+                continue
+            nb_matchs += 1
+            g, ga = n(m["clubs"][cid].get("goals")), n(m["clubs"][adv].get("goals"))
+            for p in js.values():
+                ligne, arch = POSTE.get(p.get("pos"), ""), int(n(p.get("archetypeid")))
+                if not ligne or not arch:
+                    continue
+                s = stats.setdefault((ligne, arch), {"u": 0, "note": 0.0, "v": 0, "t": [], "o": [], "clubs": set(), "noms": {}})
+                s["u"] += 1; s["note"] += n(p.get("rating")); s["v"] += g > ga; s["clubs"].add(cid)
+                t, o = tailles.get(p.get("playername"), (0, 0))
+                if t: s["t"].append(t)
+                if o: s["o"].append(o)
+                s["noms"][p.get("playername")] = s["noms"].get(p.get("playername"), 0) + 1
+    tot = {}
+    for (ligne, arch), s in stats.items():
+        tot[ligne] = tot.get(ligne, 0) + s["u"]
+    date = datetime.now(PARIS).strftime("%d/%m/%Y %H:%M")
+    lignes = []
+    for (ligne, arch), s in sorted(stats.items(), key=lambda kv: (kv[0][0], -kv[1]["u"])):
+        moy = lambda l: round(sum(l) / len(l), 1) if l else ""
+        ex = ", ".join(k for k, _ in sorted(s["noms"].items(), key=lambda kv: -kv[1])[:3])
+        lignes.append([date, ligne, arch, ARCH.get(arch, str(arch)), s["u"], round(100 * s["u"] / tot[ligne]), round(s["note"] / s["u"], 2),
+                       round(100 * s["v"] / s["u"]), moy(s["t"]), moy(s["o"]), len(s["clubs"]), ex])
+    resume = {"date": date, "clubs": len(top), "explores": len(infos), "matchs": nb_matchs,
+              "skillMin": infos[top[-1]]["skill"] if top else 0, "skillMax": infos[top[0]]["skill"] if top else 0}
+    return lignes, resume
+
+
 def discord(embeds):
     url = os.environ.get("DISCORD_WEBHOOK")
     if not url or not embeds:
@@ -386,6 +467,16 @@ def main():
         e2 = embed_bilan(soiree); e2["title"] = "🧪 Message de test"
         discord([e1, e2])
         print(f"Discord : 2 messages de test envoyés (soirée de {len(soiree)} matchs)")
+        return
+    if "--meta" in sys.argv:
+        lignes, resume = meta()
+        if not lignes:
+            print("Méta : aucune donnée"); sys.exit(1)
+        json.dump({"lignes": lignes, "resume": resume}, open("meta.json", "w"), ensure_ascii=False, indent=1)
+        rep = envoyer_sheet({"meta": {"lignes": lignes, "resume": resume}})
+        print(f"Méta envoyée : {len(lignes)} lignes, {resume}")
+        if not rep or not rep.get("ok"):
+            sys.exit(1)
         return
     if "--bulletin" in sys.argv:
         bulletin(); return
