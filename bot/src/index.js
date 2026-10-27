@@ -49,6 +49,7 @@ async function gs(env, action, data = {}) {
   const r = await fetch(env.APPS_SCRIPT_URL, { method: "POST", headers: { "content-type": "text/plain;charset=utf-8" }, body: JSON.stringify({ cle: env.CLE, bot: { action, ...data } }), redirect: "follow" });
   const t = await r.text(); let j;
   try { j = JSON.parse(t); } catch (_) { throw new Error("Le Google Sheet ne répond pas (script Apps Script à redéployer ?)"); }
+  if (j.v === undefined) throw new Error("Le script du Google Sheet n'est pas à jour : colle le nouveau Code.gs puis Déployer › Gérer les déploiements › Modifier › Nouvelle version.");
   if (!j.ok) throw new Error(j.erreur || "Erreur côté Sheet");
   return j;
 }

@@ -12,7 +12,7 @@ let reponsesSheet = {};
 globalThis.fetch = async (url, opt = {}) => {
   const body = typeof opt.body === "string" ? opt.body : opt.body instanceof FormData ? JSON.parse(opt.body.get("payload_json")) : null;
   appels.push({ url: String(url), method: opt.method || "GET", body });
-  if (String(url).startsWith(env.APPS_SCRIPT_URL)) { const b = JSON.parse(body); const r = reponsesSheet[b.bot.action]; return new Response(JSON.stringify(typeof r === "function" ? r(b.bot) : r || { ok: true })); }
+  if (String(url).startsWith(env.APPS_SCRIPT_URL)) { const b = JSON.parse(body); const r = reponsesSheet[b.bot.action]; return new Response(JSON.stringify({ v: 1, ...(typeof r === "function" ? r(b.bot) : r || { ok: true }) })); }
   return new Response(JSON.stringify({ id: "msg1" }), { status: 200 });
 };
 async function req(obj) {
