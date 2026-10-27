@@ -47,12 +47,19 @@ def n(v):
         return 0.0
 
 
+CHAMPS_ADV = ["playername", "pos", "archetypeid", "rating", "secondsPlayed", "goals", "assists", "shots",
+              "passesmade", "passattempts", "tacklesmade", "tackleattempts", "saves", "mom"]
+
+
 def alleger(m):
     clubs = {cid: {"goals": c.get("goals"), "winnerByDnf": c.get("winnerByDnf"), "TEAM": c.get("TEAM"), "details": {"name": (c.get("details") or {}).get("name")}}
              for cid, c in (m.get("clubs") or {}).items()}
     agg = {cid: (a if cid == CLUB_ID else {"goals": a.get("goals")}) for cid, a in (m.get("aggregate") or {}).items()}
-    return {"matchId": m["matchId"], "timestamp": m["timestamp"], "clubs": clubs,
-            "players": {CLUB_ID: (m.get("players") or {}).get(CLUB_ID, {})}, "aggregate": agg}
+    joueurs = {}
+    for cid, js in (m.get("players") or {}).items():
+        # nos joueurs : tout ; adversaires : l'essentiel pour la feuille de match
+        joueurs[cid] = js if cid == CLUB_ID else {pid: {k: p.get(k) for k in CHAMPS_ADV} for pid, p in js.items()}
+    return {"matchId": m["matchId"], "timestamp": m["timestamp"], "clubs": clubs, "players": joueurs, "aggregate": agg}
 
 
 def recuperer():
