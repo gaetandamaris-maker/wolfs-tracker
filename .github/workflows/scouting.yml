@@ -1,0 +1,19 @@
+name: Scouting adversaire
+# Actions > Scouting adversaire > Run workflow : tapez le nom du club à analyser.
+on:
+  workflow_dispatch:
+    inputs:
+      club:
+        description: "Nom du club adverse (tel qu'il apparaît dans FC 27)"
+        required: true
+jobs:
+  scouter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scouter le club
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          CLE_EXTENSION: ${{ secrets.CLE_EXTENSION }}
+          CLUB: ${{ github.event.inputs.club }}
+        run: python3 tracker.py --scout "$CLUB"

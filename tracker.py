@@ -9,7 +9,7 @@ Options :
   --test           vérifie seulement qu'EA répond depuis ce serveur
   --boucle MIN     reste actif MIN minutes et vérifie toutes les 2 minutes
 """
-import json, os, sys, time, urllib.request, urllib.error
+import json, os, sys, time, urllib.parse, urllib.request, urllib.error
 from datetime import datetime, timezone, timedelta
 
 CLUB_ID = "1769531"
@@ -72,12 +72,52 @@ def recuperer():
     return donnees
 
 
+# ---------------------------------------------------------------- scouting
+NOM_CLUB = "X2RUE PLK WOLfS"
+POSTE = {"forward": "Attaquant", "midfielder": "Milieu", "defender": "Défenseur", "goalkeeper": "Gardien"}
+
+
+def division_de(club_id, nom):
+    for scope in ("currentSeasonLeaderboard", "allTimeLeaderboard"):
+        try:
+            for c in ea(f"{scope}/search?platform={PLATEFORME}&clubName=" + urllib.parse.quote(nom)) or []:
+                if str(c.get("clubId")) == str(club_id):
+                    return int(n(c.get("currentDivision"))), int(n(c.get("bestDivision")))
+        except Exception:
+            pass
+    return 0, 0
+
+
+def scouter(club_id):
+    """Ligne de l'onglet Scouting pour un club (format partagé avec l'app)."""
+    info = (ea(f"clubs/info?platform={PLATEFORME}&clubIds={club_id}") or {}).get(str(club_id), {})
+    nom = info.get("name") or str(club_id)
+    kit = info.get("customKit") or {}
+    ecusson = kit.get("crestAssetId") if kit.get("selectedKitType") == "1" else info.get("teamId")
+    o = (ea(f"clubs/overallStats?platform={PLATEFORME}&clubIds={club_id}") or [{}])[0]
+    mem = (ea(f"members/stats?platform={PLATEFORME}&clubId={club_id}") or {}).get("members", [])
+    div, best = division_de(club_id, nom)
+    forme = "".join({"1": "V", "2": "D", "3": "N"}.get(str(o.get(f"lastMatch{i}")), "") for i in range(10))
+    joueurs = sorted([m for m in mem if n(m.get("gamesPlayed")) > 0], key=lambda m: -n(m.get("gamesPlayed")))[:12]
+    js = [[m.get("name"), POSTE.get(m.get("favoritePosition"), ""), int(n(m.get("gamesPlayed"))), int(n(m.get("goals"))), int(n(m.get("assists"))),
+           n(m.get("ratingAve")), int(n(m.get("proOverall"))), int(n(m.get("manOfTheMatch"))), int(n(m.get("passSuccessRate"))), int(n(m.get("proHeight")))] for m in joueurs]
+    return [str(club_id), nom, "", div, int(n(o.get("skillRating"))), int(n(o.get("gamesPlayed"))), int(n(o.get("wins"))), int(n(o.get("ties"))),
+            int(n(o.get("losses"))), int(n(o.get("goals"))), int(n(o.get("goalsAgainst"))), forme, json.dumps(js, ensure_ascii=False), str(ecusson or ""), best]
+
+
+def instantane_club():
+    o = (ea(f"clubs/overallStats?platform={PLATEFORME}&clubIds={CLUB_ID}") or [{}])[0]
+    div, _ = division_de(CLUB_ID, NOM_CLUB)
+    return {"skill": n(o.get("skillRating")), "division": div, "rep": n(o.get("reputationtier")), "mj": n(o.get("gamesPlayed")),
+            "v": n(o.get("wins")), "n": n(o.get("ties")), "d": n(o.get("losses")), "buts": n(o.get("goals")), "encaisses": n(o.get("goalsAgainst"))}
+
+
 def envoyer_sheet(donnees):
     url, cle = os.environ.get("APPS_SCRIPT_URL"), os.environ.get("CLE_EXTENSION")
     if not url or not cle:
         print("Sheet : secrets APPS_SCRIPT_URL / CLE_EXTENSION absents, envoi ignoré")
         return None
-    corps = json.dumps({"cle": cle, "clubId": CLUB_ID, **donnees}).encode("utf-8")
+    corps = json.dumps({"cle": cle, "clubId": CLUB_ID, "source": "GitHub", **donnees}).encode("utf-8")
     req = urllib.request.Request(url, data=corps, headers={"Content-Type": "text/plain;charset=utf-8"})
     with urllib.request.urlopen(req, timeout=60) as r:
         rep = json.loads(r.read().decode("utf-8"))
@@ -222,7 +262,24 @@ def un_tour(etat):
     nouveaux = [(t, m) for t, m in tous if m["matchId"] not in etat["vus"]]
     print(f"EA : {len(tous)} matchs lus, {len(nouveaux)} nouveau(x)")
     if nouveaux:
-        envoyer_sheet(donnees)
+        extras = {}
+        try:
+            extras["club"] = instantane_club()
+        except Exception as e:
+            print("Instantané club impossible :", e)
+        adv_ids = {next((k for k in m["clubs"] if k != CLUB_ID), "") for _, m in nouveaux}
+        scoutes = etat.setdefault("scoutes", {})
+        lignes = []
+        for cid in adv_ids:
+            if not cid or time.time() - scoutes.get(cid, 0) < 6 * 3600:
+                continue
+            try:
+                lignes.append(scouter(cid)); scoutes[cid] = time.time(); time.sleep(1)
+            except Exception as e:
+                print("Scouting impossible pour", cid, ":", e)
+        if lignes:
+            extras["scouting"] = lignes
+        envoyer_sheet({**donnees, **extras})
     embeds = []
     if etat["init"]:
         embeds += [embed_match(m, t) for t, m in nouveaux if t in DISCORD_TYPES]
@@ -272,6 +329,21 @@ def main():
         e2 = embed_bilan(soiree); e2["title"] = "🧪 Message de test"
         discord([e1, e2])
         print(f"Discord : 2 messages de test envoyés (soirée de {len(soiree)} matchs)")
+        return
+    if "--scout" in sys.argv:
+        nom = sys.argv[sys.argv.index("--scout") + 1].strip()
+        trouves = []
+        for scope in ("currentSeasonLeaderboard", "allTimeLeaderboard"):
+            for c in ea(f"{scope}/search?platform={PLATEFORME}&clubName=" + urllib.parse.quote(nom)) or []:
+                if all(str(c.get("clubId")) != str(t.get("clubId")) for t in trouves):
+                    trouves.append(c)
+        if not trouves:
+            print(f"Aucun club trouvé pour « {nom} »"); sys.exit(1)
+        exact = [c for c in trouves if (c.get("clubName") or "").lower() == nom.lower()]
+        choix = (exact or trouves)[0]
+        print("Clubs trouvés :", ", ".join(f'{c.get("clubName")} ({c.get("clubId")})' for c in trouves[:8]))
+        print("Club scouté :", choix.get("clubName"), choix.get("clubId"))
+        envoyer_sheet({"scouting": [scouter(choix["clubId"])]})
         return
     minutes = int(sys.argv[sys.argv.index("--boucle") + 1]) if "--boucle" in sys.argv else 0
     fin = time.time() + minutes * 60
