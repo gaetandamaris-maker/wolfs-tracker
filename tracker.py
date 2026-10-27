@@ -203,6 +203,22 @@ def main():
             except Exception as e:
                 print(f"BLOQUÉ {t} : {e}"); sys.exit(1)
         return
+    if "--test-discord" in sys.argv:
+        if not os.environ.get("DISCORD_WEBHOOK"):
+            print("Secret DISCORD_WEBHOOK absent"); sys.exit(1)
+        donnees = recuperer()
+        tous = sorted([(TYPES[t], m) for t in TYPES for m in donnees[t]], key=lambda x: x[1]["timestamp"])
+        # dernière soirée : matchs séparés de moins de 45 min du précédent
+        soiree = [tous[-1]]
+        for t, m in reversed(tous[:-1]):
+            if soiree[0][1]["timestamp"] - m["timestamp"] > FIN_SESSION_MIN * 60:
+                break
+            soiree.insert(0, (t, m))
+        e1 = embed_match(tous[-1][1], tous[-1][0]); e1["title"] = "TEST · " + e1["title"]
+        e2 = embed_bilan(soiree); e2["title"] = "TEST · " + e2["title"]
+        discord([e1, e2])
+        print(f"Discord : 2 messages de test envoyés (soirée de {len(soiree)} matchs)")
+        return
     minutes = int(sys.argv[sys.argv.index("--boucle") + 1]) if "--boucle" in sys.argv else 0
     fin = time.time() + minutes * 60
     etat = charger_etat()
