@@ -292,7 +292,12 @@ def bulletin():
     b = rep["bulletin"]
     if not b.get("matchs"):
         print(f"Aucun match du {b['debut']} au {b['fin']} : pas de bulletin."); return
-    discord([embed_bulletin(b)])
+    if os.environ.get("DISCORD_WEBHOOK"):
+        discord([embed_bulletin(b)])
+    elif os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
+        poster_bot(os.environ["DISCORD_SALON"], [embed_bulletin(b)])
+    else:
+        print("Ni webhook ni salon du bot configuré : bulletin non posté."); sys.exit(1)
     print(f"Bulletin posté : {b['matchs']} match(s) du {b['debut']} au {b['fin']}")
 
 
@@ -408,6 +413,14 @@ def discord(embeds):
                                      headers={"Content-Type": "application/json", "User-Agent": "TrackerWolfs/1.0"})
         urllib.request.urlopen(req, timeout=20).read()
         time.sleep(1)
+
+
+def poster_bot(salon, embeds):
+    """Poste avec le bot Wolfs (même bot que les dispos) dans un salon donné."""
+    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{salon}/messages", data=json.dumps({"embeds": embeds[:10]}).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": "Bot " + os.environ["DISCORD_TOKEN"],
+                                          "User-Agent": "DiscordBot (https://github.com/gaetandamaris-maker/wolfs-tracker, 1.0)"})
+    urllib.request.urlopen(req, timeout=20).read()
 
 
 def charger_etat():

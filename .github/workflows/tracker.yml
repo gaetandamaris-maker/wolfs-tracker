@@ -44,6 +44,8 @@ jobs:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
           CLE_EXTENSION: ${{ secrets.CLE_EXTENSION }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DISCORD_SALON: "1564682094498807838"   # salon des dispos (le bulletin y est posté par le bot si aucun webhook)
         run: |
           if [ "${{ github.event.inputs.test_discord }}" = "true" ]; then python3 tracker.py --test-discord; exit $?; fi
           if [ "${{ github.event.inputs.renvoyer }}" = "true" ]; then python3 tracker.py --envoi; exit $?; fi
