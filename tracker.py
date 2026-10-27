@@ -7,6 +7,8 @@ Variables (secrets GitHub) :
   DISCORD_WEBHOOK  (optionnel) webhook du salon Discord
 Options :
   --test           vérifie seulement qu'EA répond depuis ce serveur
+  --envoi          renvoie au Sheet tous les matchs encore disponibles chez EA
+  --bulletin       poste le bulletin de la semaine passée sur Discord
   --boucle MIN     reste actif MIN minutes et vérifie toutes les 2 minutes
 """
 import json, os, sys, time, urllib.parse, urllib.request, urllib.error
@@ -237,6 +239,61 @@ def embed_bilan(session):
             "thumbnail": {"url": NOTRE_ECUSSON}}
 
 
+def embed_bulletin(b):
+    """Bulletin de la semaine (lundi matin) à partir du calcul fait par le script du Sheet."""
+    v, nu, d = b.get("v", 0), b.get("n", 0), b.get("d", 0)
+    couleur = VERT if v > d else ROUGE if d > v else AMBRE
+    desc = (f"## 📰 BULLETIN DE LA SEMAINE\n-# du {b['debut']} au {b['fin']}\n"
+            f"# {v}V · {nu}N · {d}D\n**{b['matchs']}** match(s) · **{b.get('bp', 0)}** buts marqués · **{b.get('bc', 0)}** encaissés")
+    types = " · ".join(f"{t} {x['v']}/{x['m']}" for t, x in (b.get("parType") or {}).items())
+    if types:
+        desc += f"\n-# Victoires par type : {types}"
+    champs = []
+    sk = b.get("skill")
+    if sk:
+        dl = sk["fin"] - sk["debut"]
+        fl = "📈" if dl > 0 else "📉" if dl < 0 else "➖"
+        div = f"D{sk['divFin']}" + (f" (était D{sk['divDebut']})" if sk["divFin"] != sk["divDebut"] else "")
+        champs.append({"name": f"{fl} Skill rating", "value": f"**{sk['debut']} → {sk['fin']}** ({dl:+d}) · {div}", "inline": False})
+    j = b.get("joueur")
+    if j:
+        champs.append({"name": "🏆 Joueur de la semaine", "value": f"**{j['n']}** · **{j['note']:.2f}** de moyenne sur {j['mj']} match(s)"
+                       + (f" · {j['b']} but(s)" if j["b"] else "") + (f" · {j['pd']} passe(s) D" if j["pd"] else "") + (f" · {j['hdm']}× HDM" if j.get("hdm") else ""), "inline": False})
+    eq = b.get("equipe") or []
+    if eq:
+        ab = {"Gardien": "GB ", "Défenseur": "DEF", "Milieu": "MIL", "Attaquant": "ATT"}
+        lignes = [f"{ab.get(l['ligne'], l['ligne'][:3])}  " + " · ".join(f"{x['n'][:13]} {x['note']:.1f}" for x in l["joueurs"]) for l in eq]
+        champs.append({"name": "🧩 Équipe type de la semaine", "value": ("```\n" + "\n".join(lignes) + "\n```")[:1024], "inline": False})
+    if b.get("buteurs"):
+        champs.append({"name": "⚽ Les plus décisifs", "value": "\n".join(f"**{x['n']}** · {x['b']} B · {x['pd']} PD" for x in b["buteurs"]), "inline": True})
+    forme = [f"📈 **{x['n']}** {x['note']:.2f} (+{x['delta']:.2f})" for x in b.get("enForme") or []] + [f"📉 **{x['n']}** {x['note']:.2f} ({x['delta']:.2f})" for x in b.get("enBaisse") or []]
+    if forme:
+        champs.append({"name": "🌡️ Forme", "value": "\n".join(forme), "inline": True})
+    recs = [f"**{r['lib']}** : {r['val']}" + (f" par **{r['n']}**" if r["n"] else "") + (f" contre {r['adv']}" if r["adv"] else "") + f" *(ancien : {r['ancien']})*" for r in b.get("records") or []]
+    if b.get("serieV"):
+        recs.append(f"**{b['serieV']} victoires d'affilée** 🔥")
+    if recs:
+        champs.append({"name": "🔥 Records battus", "value": "\n".join(recs)[:1024], "inline": False})
+    if b.get("mvp"):
+        champs.append({"name": "🗳️ MVP votés par l'équipe", "value": " · ".join(f"<@{x['id']}> ×{x['nb']}" for x in b["mvp"]), "inline": False})
+    return {"author": {"name": "X2RUE PLK WOLfS", "icon_url": NOTRE_ECUSSON}, "description": desc, "color": couleur, "fields": champs,
+            "footer": {"text": "Bulletin automatique · Tracker Wolfs", "icon_url": NOTRE_ECUSSON}, "thumbnail": {"url": NOTRE_ECUSSON}}
+
+
+def bulletin():
+    url, cle = os.environ.get("APPS_SCRIPT_URL"), os.environ.get("CLE_EXTENSION")
+    req = urllib.request.Request(url, data=json.dumps({"cle": cle, "bot": {"action": "bulletin"}}).encode("utf-8"), headers={"Content-Type": "text/plain;charset=utf-8"})
+    with urllib.request.urlopen(req, timeout=90) as r:
+        rep = json.loads(r.read().decode("utf-8"))
+    if not rep.get("ok") or "bulletin" not in rep:
+        print("Bulletin indisponible (script du Sheet à jour ?) :", rep); sys.exit(1)
+    b = rep["bulletin"]
+    if not b.get("matchs"):
+        print(f"Aucun match du {b['debut']} au {b['fin']} : pas de bulletin."); return
+    discord([embed_bulletin(b)])
+    print(f"Bulletin posté : {b['matchs']} match(s) du {b['debut']} au {b['fin']}")
+
+
 def discord(embeds):
     url = os.environ.get("DISCORD_WEBHOOK")
     if not url or not embeds:
@@ -329,6 +386,14 @@ def main():
         e2 = embed_bilan(soiree); e2["title"] = "🧪 Message de test"
         discord([e1, e2])
         print(f"Discord : 2 messages de test envoyés (soirée de {len(soiree)} matchs)")
+        return
+    if "--bulletin" in sys.argv:
+        bulletin(); return
+    if "--envoi" in sys.argv:
+        # renvoie au Sheet tous les matchs encore chez EA (10 par type) : complète les colonnes ajoutées après coup
+        rep = envoyer_sheet(recuperer())
+        if not rep or not rep.get("ok"):
+            print("Envoi refusé :", rep); sys.exit(1)
         return
     if "--scout" in sys.argv:
         nom = sys.argv[sys.argv.index("--scout") + 1].strip()
