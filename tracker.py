@@ -31,7 +31,7 @@ HEADERS = {
 }
 TYPES = {"leagueMatch": "Ligue", "playoffMatch": "Playoff", "friendlyMatch": "Tournoi"}
 # Noms d'archétypes en français (comme dans l'app)
-ARCH = {1: "Gardien sur sa ligne", 2: "Gardien libéro", 3: "Progresseur", 4: "Boss", 5: "Maraudeur", 6: "Perturbateur", 7: "Récupérateur",
+ARCH = {1: "Dernier rempart", 2: "Gardien libéro", 3: "Facilitateur", 4: "Boss", 5: "Traqueur", 6: "Trouble-fête", 7: "Récupérateur",
         8: "Maestro", 9: "Créateur", 10: "Étincelle", 11: "Magicien", 12: "Finisseur", 13: "Point d'appui"}
 from zoneinfo import ZoneInfo
 PARIS = ZoneInfo("Europe/Paris")
