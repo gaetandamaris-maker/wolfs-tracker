@@ -296,6 +296,19 @@ def bulletin():
 
 
 # ---------------------------------------------------------------- méta (chaque jour)
+def profil_brut(p):
+    """Actions d'un joueur sur un match : champs EA + événements (même découpage que l'app)."""
+    e = {}
+    for i in range(4):
+        for pr in (p.get(f"match_event_aggregate_{i}") or "").split(","):
+            if ":" in pr:
+                k, v = pr.split(":"); e[int(k)] = e.get(int(k), 0) + n(v)
+    return {"tirs": n(p.get("shots")), "b": n(p.get("goals")), "pd": n(p.get("assists")), "pt": n(p.get("passattempts")), "pr": n(p.get("passesmade")),
+            "tt": n(p.get("tackleattempts")), "tr": n(p.get("tacklesmade")), "drb": e.get(174, 0), "int": e.get(6, 0), "aer": e.get(265, 0) + e.get(266, 0),
+            "cent": e.get(36, 0), "prof": e.get(152, 0), "uneT": e.get(143, 0), "recup": e.get(108, 0) + e.get(109, 0) + e.get(110, 0),
+            "longR": e.get(28, 0), "pav": e.get(30, 0), "elim": e.get(112, 0)}
+
+
 def meta(max_clubs=70, elite=25):
     """Ce que jouent les meilleurs clubs croisés autour de nous : archétype, taille, OVR, note et victoires par ligne.
     On part de nos adversaires, puis de leurs adversaires (les mieux classés d'abord), et on garde les clubs au meilleur skill rating."""
@@ -354,8 +367,13 @@ def meta(max_clubs=70, elite=25):
                 ligne, arch = POSTE.get(p.get("pos"), ""), int(n(p.get("archetypeid")))
                 if not ligne or not arch:
                     continue
-                s = stats.setdefault((ligne, arch), {"u": 0, "note": 0.0, "v": 0, "t": [], "o": [], "clubs": set(), "noms": {}})
+                s = stats.setdefault((ligne, arch), {"u": 0, "note": 0.0, "v": 0, "t": [], "o": [], "clubs": set(), "noms": {}, "min": 0.0, "f": {}})
                 s["u"] += 1; s["note"] += n(p.get("rating")); s["v"] += g > ga; s["clubs"].add(cid)
+                mins = n(p.get("secondsPlayed")) / 60
+                if mins >= 30:
+                    s["min"] += mins
+                    for k, val in profil_brut(p).items():
+                        s["f"][k] = s["f"].get(k, 0) + val
                 t, o = tailles.get(p.get("playername"), (0, 0))
                 if t: s["t"].append(t)
                 if o: s["o"].append(o)
@@ -368,8 +386,13 @@ def meta(max_clubs=70, elite=25):
     for (ligne, arch), s in sorted(stats.items(), key=lambda kv: (kv[0][0], -kv[1]["u"])):
         moy = lambda l: round(sum(l) / len(l), 1) if l else ""
         ex = ", ".join(k for k, _ in sorted(s["noms"].items(), key=lambda kv: -kv[1])[:3])
+        prof = {k: round(v / s["min"] * 90, 2) for k, v in s["f"].items()} if s["min"] >= 90 else {}
+        if prof:
+            prof["pPass"] = round(100 * s["f"].get("pr", 0) / max(1, s["f"].get("pt", 0)))
+            prof["pTacl"] = round(100 * s["f"].get("tr", 0) / max(1, s["f"].get("tt", 0)))
+            prof["min"] = round(s["min"])
         lignes.append([date, ligne, arch, ARCH.get(arch, str(arch)), s["u"], round(100 * s["u"] / tot[ligne]), round(s["note"] / s["u"], 2),
-                       round(100 * s["v"] / s["u"]), moy(s["t"]), moy(s["o"]), len(s["clubs"]), ex])
+                       round(100 * s["v"] / s["u"]), moy(s["t"]), moy(s["o"]), len(s["clubs"]), ex, json.dumps(prof, separators=(",", ":"))])
     resume = {"date": date, "clubs": len(top), "explores": len(infos), "matchs": nb_matchs,
               "skillMin": infos[top[-1]]["skill"] if top else 0, "skillMax": infos[top[0]]["skill"] if top else 0}
     return lignes, resume
