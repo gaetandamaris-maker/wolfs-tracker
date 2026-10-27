@@ -30,8 +30,9 @@ HEADERS = {
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
 }
 TYPES = {"leagueMatch": "Ligue", "playoffMatch": "Playoff", "friendlyMatch": "Tournoi"}
-ARCH = {1: "Shot Stopper", 2: "Sweeper Keeper", 3: "Progressor", 4: "Boss", 5: "Marauder", 6: "Disruptor", 7: "Recycler",
-        8: "Maestro", 9: "Creator", 10: "Spark", 11: "Magician", 12: "Finisher", 13: "Target"}
+# Noms d'archétypes en français (comme dans l'app)
+ARCH = {1: "Gardien sur sa ligne", 2: "Gardien libéro", 3: "Progresseur", 4: "Boss", 5: "Maraudeur", 6: "Perturbateur", 7: "Récupérateur",
+        8: "Maestro", 9: "Créateur", 10: "Étincelle", 11: "Magicien", 12: "Finisseur", 13: "Point d'appui"}
 from zoneinfo import ZoneInfo
 PARIS = ZoneInfo("Europe/Paris")
 
