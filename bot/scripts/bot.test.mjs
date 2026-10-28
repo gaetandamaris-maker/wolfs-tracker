@@ -1,7 +1,7 @@
 // Tests de la logique du bot, sans réseau : Discord et le Google Sheet sont simulés.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import worker, { dateSession, lireDate, embedDispo, messageVote, taches } from "../src/index.js";
+import worker, { dateSession, lireDate, embedDispo, messageVote, taches, dispoInstantanee } from "../src/index.js";
 
 const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
 const pub = Buffer.from(await crypto.subtle.exportKey("raw", kp.publicKey)).toString("hex");
@@ -90,4 +90,16 @@ test("tâches : compo publiée, rappel, résultat du vote", async () => {
 test("embed dispo : listes et date longue", () => {
   const e = embedDispo({ session: { titre: "EPL - Lundi", date: "02/11/2026 21:00", comp: "EPL", statut: "ouverte" }, present: [{ pseudo: "Joris/BU/MOC/MC" }], absent: [], indecis: [] });
   assert.match(e.description, /lundi 2 novembre à 21h00/); assert.match(e.fields[0].value, /Joris/); assert.doesNotMatch(e.fields[0].value, /BU/);
+});
+
+test("bouton : la liste se met à jour tout de suite, puis le Sheet confirme", async () => {
+  appels.length = 0; const c = ctx();
+  const em = embedDispo({ session: { titre: "VFT", date: "28/10/2026 20:45", comp: "", statut: "ouverte" }, present: [{ pseudo: "Joris/BU" }], absent: [{ pseudo: "Kiki /BU/MOC" }], indecis: [] });
+  reponsesSheet.dispo = b => ({ ok: true, etat: { session: { id: b.session, titre: "VFT", date: "28/10/2026 20:45", comp: "", statut: "ouverte" }, present: [{ pseudo: "Joris/BU" }, { pseudo: "Kiki /BU/MOC" }], absent: [], indecis: [] } });
+  const r = await worker.fetch(await req({ type: 3, token: "T3", channel_id: "chan", member: { nick: "Kiki /BU/MOC", user: { id: "u2" } }, message: { id: "m", embeds: [em], components: [] }, data: { custom_id: "d:s1:present" } }), env, c);
+  const j = await r.json(); assert.equal(j.type, 7);
+  const f = j.data.embeds[0].fields;
+  assert.equal(f[0].name, "✅ Présents (2)"); assert.match(f[0].value, /Kiki/); assert.equal(f[2].name, "❌ Absents (0)"); assert.equal(f[2].value, "—");
+  await c.fini();
+  assert.ok(appels.some(a => a.method === "PATCH" && /Présents \(2\)/.test(a.body)));
 });

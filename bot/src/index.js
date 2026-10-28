@@ -71,6 +71,20 @@ export function embedDispo(etat) {
     footer: { text: s.statut === "fermée" ? "Session fermée" : "Wolfs · la compo arrivera ici depuis l'app" }
   };
 }
+/* Mise à jour immédiate du message (avant la réponse du Sheet) : on déplace le joueur dans la bonne colonne. */
+const CHAMPS = { present: [0, "✅ Présents"], indecis: [1, "❓ Indécis"], absent: [2, "❌ Absents"] };
+export function dispoInstantanee(embed, pseudo, rep) {
+  if (!embed || !Array.isArray(embed.fields) || embed.fields.length < 3 || !CHAMPS[rep]) return null;
+  const moi = "• " + nomCourt(pseudo);
+  const e = JSON.parse(JSON.stringify(embed));
+  for (const [k, [i, titre]] of Object.entries(CHAMPS)) {
+    const f = e.fields[i]; if (!f) return null;
+    let l = String(f.value || "").split("\n").filter(x => x && x !== "—" && x !== moi);
+    if (k === rep) l.push(moi);
+    f.value = court(l.join("\n"), 1000) || "—"; f.name = `${titre} (${l.length})`;
+  }
+  return e;
+}
 export const boutonsDispo = (sid, ferme) => [{ type: 1, components: [
   { type: 2, style: 3, label: "Présent", emoji: { name: "✅" }, custom_id: `d:${sid}:present`, disabled: !!ferme },
   { type: 2, style: 2, label: "Indécis", emoji: { name: "❓" }, custom_id: `d:${sid}:indecis`, disabled: !!ferme },
@@ -178,7 +192,8 @@ async function interaction(it, env, ctx) {
           else await suivi(env, it.token, { content: "Session en cours d'enregistrement, réessaie dans quelques secondes.", flags: EPHEMERE });
         } catch (e) { await suivi(env, it.token, { content: "⚠️ " + e.message, flags: EPHEMERE }).catch(() => {}); }
       })());
-      return json({ type: T.DEFER_UPDATE });
+      const vite = dispoInstantanee(it.message?.embeds?.[0], user.pseudo, rep);
+      return json(vite ? { type: T.UPDATE, data: { embeds: [vite], components: it.message.components } } : { type: T.DEFER_UPDATE });
     }
     if (k === "v") {
       const pour = it.data.values?.[0];
