@@ -1,6 +1,7 @@
 // Tests de la logique du bot, sans réseau : Discord et le Google Sheet sont simulés.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { nuitCalme } from "../src/discord.js";
 import worker, { dateSession, lireDate, embedDispo, messageVote, taches, dispoInstantanee, pseudoPropre, messageBulletin } from "../src/index.js";
 
 const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
@@ -128,4 +129,12 @@ test("bulletin : message en composants v2 avec l'image", () => {
   assert.equal(m.flags, 32768); assert.equal(m.components[0].type, 17);
   assert.equal(m.components[0].components[1].items[0].media.url, "attachment://bulletin.png");
   assert.match(JSON.stringify(m), /<@u1> ×2/);
+});
+
+test("nuit calme : pas de ping entre 23h et 9h (heure de Paris)", () => {
+  assert.equal(nuitCalme(Date.UTC(2026, 9, 28, 22, 30)), true);   // 23h30 Paris (hiver)
+  assert.equal(nuitCalme(Date.UTC(2026, 9, 28, 7, 59)), true);    // 8h59 Paris
+  assert.equal(nuitCalme(Date.UTC(2026, 9, 28, 8, 0)), false);    // 9h00 Paris
+  assert.equal(nuitCalme(Date.UTC(2026, 9, 28, 21, 59)), false);  // 22h59 Paris
+  assert.equal(nuitCalme(Date.UTC(2026, 6, 15, 21, 0)), true);    // 23h00 Paris (été)
 });

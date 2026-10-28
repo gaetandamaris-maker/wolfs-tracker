@@ -16,8 +16,16 @@ export async function signatureOk(req, body, cle) {
 
 export const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
+/* Nuit calme : de 23h à 9h (heure de Paris), le bot n'envoie aucune notification.
+   Les @mentions restent écrites dans les messages, mais personne n'est pingé. */
+export const NUIT = { debut: 23, fin: 9 };
+export function heureParis(ts = Date.now()) { return Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "numeric", hourCycle: "h23" }).formatToParts(ts).find(p => p.type === "hour").value) % 24; }
+export const nuitCalme = (ts = Date.now()) => { const h = heureParis(ts); return h >= NUIT.debut || h < NUIT.fin; };
+const sansPing = body => body && typeof body === "object" && nuitCalme() ? { ...body, allowed_mentions: { parse: [] } } : body;
+
 /* Appel REST avec le token du bot (messages hors interaction : rappels, compos, résultats). */
 export async function rest(env, method, path, body, fichiers) {
+  body = sansPing(body);
   const headers = { Authorization: "Bot " + env.DISCORD_TOKEN, "User-Agent": "WolfsBot (https://github.com/gaetandamaris-maker/wolfs-tracker, 1.0)" };
   let payload;
   if (fichiers && fichiers.length) {
@@ -44,6 +52,7 @@ export async function suivi(env, token, body) {
   return webhook(env, "POST", `/webhooks/${env.DISCORD_APP_ID}/${token}`, body);
 }
 async function webhook(env, method, path, body, fichiers) {
+  body = sansPing(body);
   let payload, headers = {};
   if (fichiers && fichiers.length) {
     const fd = new FormData();
