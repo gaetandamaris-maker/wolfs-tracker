@@ -81,7 +81,7 @@ export function bulletinSVG(b) {
   s += `<text x="40" y="364" ${F(21, 600)} fill="#c9cdd3">Victoires : <tspan fill="#ffffff" font-weight="700">${esc(types || "—")}</tspan></text>`;
   if (b.skill) {
     const dl = b.skill.fin - b.skill.debut, col = dl > 0 ? "#22c55e" : dl < 0 ? "#ef4444" : "#c9cdd3";
-    s += `<text x="${W2 - 40}" y="364" text-anchor="end" ${F(21, 600)} fill="#c9cdd3">Skill <tspan fill="#ffffff" font-weight="700">${b.skill.debut} → ${b.skill.fin}</tspan> <tspan fill="${col}" font-weight="700">(${signe(dl)})</tspan>  ·  D${b.skill.divFin}</text>`;
+    s += `<text x="${W2 - 40}" y="364" text-anchor="end" ${F(21, 600)} fill="#c9cdd3">Skill <tspan fill="#ffffff" font-weight="700">${b.skill.debut} &#8250; ${b.skill.fin}</tspan> <tspan fill="${col}" font-weight="700">(${signe(dl)})</tspan>  ·  D${b.skill.divFin}</text>`;
   }
   // Équipe type (terrain)
   const PX = 40, PY = 395, PW = 540, PH = 700;
@@ -124,7 +124,7 @@ export function bulletinSVG(b) {
     const y = yD + 92 + i * 52;
     s += `<circle cx="${CX + 40}" cy="${y - 8}" r="17" fill="${med[i]}"/><text x="${CX + 40}" y="${y}" text-anchor="middle" ${FC(22)} fill="#0b0d11">${i + 1}</text>
       <text x="${CX + 68}" y="${y}" ${F(22)} fill="#ffffff">${esc(court(x.n, 15))}</text>
-      <text x="${CX + CW - 24}" y="${y}" text-anchor="end" ${F(22)} fill="#e5e7eb">${x.b}<tspan fill="#8d94a1" font-weight="600" font-size="17"> B</tspan>  ${x.pd}<tspan fill="#8d94a1" font-weight="600" font-size="17"> PD</tspan></text>`;
+      <text x="${CX + CW - 24}" y="${y}" text-anchor="end" ${F(22)} fill="#e5e7eb">${x.b}<tspan fill="#8d94a1" font-weight="600" font-size="17">&#160;B</tspan>&#160;&#160;&#160;${x.pd}<tspan fill="#8d94a1" font-weight="600" font-size="17">&#160;PD</tspan></text>`;
   });
   const yF = yD + 250;
   const forme = [...(b.enForme || []).map(x => ({ ...x, up: true })), ...(b.enBaisse || []).map(x => ({ ...x, up: false }))].slice(0, 3);
