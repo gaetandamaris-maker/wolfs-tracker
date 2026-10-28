@@ -258,7 +258,7 @@ async function fermerSessionsPassees(env) {
 }
 
 export async function taches(env) {
-  await fermerSessionsPassees(env).catch(e => console.log("fermeture sessions", e.message));
+  if (new Date().getUTCMinutes() % 10 < 2) await fermerSessionsPassees(env).catch(e => console.log("fermeture sessions", e.message)); // toutes les 10 min suffit : les boutons se bloquent déjà d'eux-mêmes
   const r = await gs(env, "taches");
   for (const c of r.compos) {
     try {
