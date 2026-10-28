@@ -285,8 +285,12 @@ def embed_bulletin(b):
 def bulletin():
     url, cle = os.environ.get("APPS_SCRIPT_URL"), os.environ.get("CLE_EXTENSION")
     req = urllib.request.Request(url, data=json.dumps({"cle": cle, "bot": {"action": "bulletin"}}).encode("utf-8"), headers={"Content-Type": "text/plain;charset=utf-8"})
-    with urllib.request.urlopen(req, timeout=90) as r:
-        rep = json.loads(r.read().decode("utf-8"))
+    for essai in range(5):  # le Sheet peut être occupé quelques secondes par le bot
+        with urllib.request.urlopen(req, timeout=90) as r:
+            rep = json.loads(r.read().decode("utf-8"))
+        if rep.get("ok") or "Occupé" not in str(rep.get("erreur", "")):
+            break
+        time.sleep(15)
     if not rep.get("ok") or "bulletin" not in rep:
         print("::error::Bulletin indisponible (script du Sheet à jour ?) :", str(rep)[:300]); sys.exit(1)
     b = rep["bulletin"]
