@@ -1,7 +1,7 @@
 // Tests de la logique du bot, sans réseau : Discord et le Google Sheet sont simulés.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import worker, { dateSession, lireDate, embedDispo, messageVote, taches, dispoInstantanee } from "../src/index.js";
+import worker, { dateSession, lireDate, embedDispo, messageVote, taches, dispoInstantanee, pseudoPropre, messageBulletin } from "../src/index.js";
 
 const kp = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
 const pub = Buffer.from(await crypto.subtle.exportKey("raw", kp.publicKey)).toString("hex");
@@ -102,4 +102,30 @@ test("bouton : la liste se met à jour tout de suite, puis le Sheet confirme", a
   assert.equal(f[0].name, "✅ Présents (2)"); assert.match(f[0].value, /Kiki/); assert.equal(f[2].name, "❌ Absents (0)"); assert.equal(f[2].value, "—");
   await c.fini();
   assert.ok(appels.some(a => a.method === "PATCH" && /Présents \(2\)/.test(a.body)));
+});
+
+test("pseudos nettoyés (grades retirés, postes gardés)", () => {
+  assert.equal(pseudoPropre("CO GM /Zayko/BU/MD", "z"), "Zayko/BU/MD");
+  assert.equal(pseudoPropre("Kiiim - GM", "k"), "Kiiim");
+  assert.equal(pseudoPropre("Chocolinex/CO-GM", "c"), "Chocolinex");
+  assert.equal(pseudoPropre("Modérateur X2RUE", "vraiNom"), "vraiNom");
+  assert.equal(pseudoPropre("XX-THEO-XX63", "x"), "XX-THEO-XX63");
+});
+
+test("dispos fermées une fois l'heure passée", async () => {
+  appels.length = 0; const c = ctx();
+  const em = embedDispo({ session: { titre: "VFT", date: "01/01/2026 20:45", comp: "", statut: "ouverte" }, present: [], absent: [], indecis: [] });
+  const r = await worker.fetch(await req({ type: 3, token: "T4", channel_id: "chan", member: { nick: "Kiki", user: { id: "u2" } }, message: { id: "m9", embeds: [em], components: [] }, data: { custom_id: "d:s1:present" } }), env, c);
+  const j = await r.json(); assert.equal(j.type, 4); assert.match(j.data.content, /fermées/);
+  await c.fini();
+  const patch = appels.find(a => a.method === "PATCH" && a.url.includes("/channels/chan/messages/m9"));
+  assert.ok(patch); assert.ok(JSON.parse(patch.body).components[0].components.every(b => b.disabled));
+  assert.ok(!appels.some(a => a.url === env.APPS_SCRIPT_URL && JSON.parse(a.body).bot.action === "dispo"));
+});
+
+test("bulletin : message en composants v2 avec l'image", () => {
+  const m = messageBulletin({ debut: "19/10", fin: "25/10", matchs: 9, v: 0, n: 2, d: 7, bp: 10, bc: 20, joueur: { n: "clxpzcheexZFR-_-", note: 7.25 }, mvp: [{ id: "u1", nb: 2 }] });
+  assert.equal(m.flags, 32768); assert.equal(m.components[0].type, 17);
+  assert.equal(m.components[0].components[1].items[0].media.url, "attachment://bulletin.png");
+  assert.match(JSON.stringify(m), /<@u1> ×2/);
 });

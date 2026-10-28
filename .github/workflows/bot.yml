@@ -6,6 +6,9 @@ on:
     branches: [main]
     paths: ["bot/**", ".github/workflows/bot.yml"]
 
+permissions:
+  contents: write
+
 concurrency:
   group: bot
   cancel-in-progress: false
@@ -83,3 +86,13 @@ jobs:
           sleep 5
           for i in 1 2 3; do node scripts/commandes.mjs && exit 0; sleep 20; done
           exit 1
+
+      - name: Aperçus des images (branche apercus)
+        if: always()
+        continue-on-error: true
+        run: |
+          cp dist/*.png /tmp/ && cd "$GITHUB_WORKSPACE"
+          git config user.name "Bot Wolfs"; git config user.email "bot@users.noreply.github.com"
+          git fetch -q origin apercus 2>/dev/null && git checkout -q apercus 2>/dev/null || git checkout -q --orphan apercus
+          git rm -rq --cached . 2>/dev/null || true
+          cp /tmp/*.png . && git add -f *.png && git commit -qm "Aperçus $(date -u +%F_%H%M)" && git push -q origin HEAD:apercus

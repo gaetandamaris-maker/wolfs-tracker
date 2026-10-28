@@ -290,6 +290,14 @@ def bulletin():
     if not rep.get("ok") or "bulletin" not in rep:
         print("::error::Bulletin indisponible (script du Sheet à jour ?) :", str(rep)[:300]); sys.exit(1)
     b = rep["bulletin"]
+    if b.get("matchs") and os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
+        try:  # version illustrée : image + mise en page Discord, générée par le bot Wolfs
+            res = bulletin_par_bot()
+            if res.get("ok") and res.get("message"):
+                print(f"::notice::Bulletin illustré posté par le bot ({res.get('matchs')} matchs)"); return
+            print("::warning::Bulletin illustré impossible :", str(res)[:300])
+        except Exception as e:
+            print("::warning::Bulletin illustré impossible, envoi en version simple :", str(e)[:300])
     if not b.get("matchs"):
         print(f"::notice::Aucun match du {b['debut']} au {b['fin']} : pas de bulletin. Diagnostic : {b.get('diag', 'script du Sheet sans diagnostic')}"); return
     if os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
@@ -414,6 +422,23 @@ def discord(embeds):
                                      headers={"Content-Type": "application/json", "User-Agent": "TrackerWolfs/1.0"})
         urllib.request.urlopen(req, timeout=20).read()
         time.sleep(1)
+
+
+def bulletin_par_bot():
+    """Demande au bot (Cloudflare) de dessiner et poster le bulletin. Son adresse est lue chez Discord."""
+    h = {"Authorization": "Bot " + os.environ["DISCORD_TOKEN"], "User-Agent": "DiscordBot (https://github.com/gaetandamaris-maker/wolfs-tracker, 1.0)"}
+    with urllib.request.urlopen(urllib.request.Request("https://discord.com/api/v10/applications/@me", headers=h), timeout=20) as r:
+        app = json.loads(r.read().decode())
+    base = (app.get("interactions_endpoint_url") or "").rsplit("/interactions", 1)[0]
+    if not base:
+        raise RuntimeError("adresse du bot inconnue")
+    req = urllib.request.Request(base + "/bulletin", data=json.dumps({"salon": os.environ["DISCORD_SALON"]}).encode(),
+                                 headers={"Content-Type": "application/json", "x-cle": os.environ.get("CLE_EXTENSION", ""), "User-Agent": "TrackerWolfs/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "code": e.code, "erreur": e.read().decode("utf-8", "replace")[:300]}
 
 
 def poster_bot(salon, embeds):

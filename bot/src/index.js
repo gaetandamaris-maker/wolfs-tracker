@@ -1,7 +1,7 @@
 // Bot Discord des Wolfs : dispos, compo publiée depuis l'app, rappels, vote MVP, classement.
 // Hébergé sur Cloudflare Workers ; toutes les données vivent dans le Google Sheet (via Apps Script).
 import { signatureOk, json, rest, editerReponse, suivi, T, EPHEMERE } from "./discord.js";
-import { compoSVG } from "./rendu.js";
+import { compoSVG, bulletinSVG } from "./rendu.js";
 
 const ROUGE = 0xdb1012, AMBRE = 0xfea40b, VERT = 0x2f9e6c, OR = 0xc9a227;
 const LIGNE = { G: "Gardien", DC: "Défense", DG: "Défense", DD: "Défense", DLG: "Défense", DLD: "Défense", MDC: "Milieu", MC: "Milieu", MG: "Milieu", MD: "Milieu", MOC: "Milieu", AG: "Attaque", AD: "Attaque", AT: "Attaque", BU: "Attaque" };
@@ -123,7 +123,18 @@ async function imageCompo(c) {
   try { const { png } = await import("./png.js"); return await png(compoSVG(c)); }
   catch (e) { console.log("rendu image impossible", e.message); return null; }
 }
-const utilisateur = it => { const u = it.member?.user || it.user || {}; return { id: u.id, pseudo: it.member?.nick || u.global_name || u.username || "?" }; };
+/* Pseudo du serveur nettoyé : « CO GM /Zayko/BU/MD » → « Zayko/BU/MD », « Kiiim - GM » → « Kiiim ».
+   On garde le nom + les postes (le Sheet s'en sert), on retire les grades (GM, CO-GM, modo…). */
+const POSTES = new Set(["G", "GB", "DC", "DG", "DD", "DLG", "DLD", "MDC", "MC", "MG", "MD", "MOC", "AG", "AD", "BU", "AT", "ATT", "AC", "PIV"]);
+const GRADE = /^(co[\s-]*gm|gm|co|cap(itaine)?|capi|vice[\s-]*cap|modo|mod[ée]rateur|admin|staff|coach|manager|x2rue|plk|wolfs?)$/i;
+export function pseudoPropre(brut, secours) {
+  const t = String(brut || "").split(/\s*[\/|•·]\s*|\s+[-–—]\s+/).map(x => x.trim()).filter(Boolean);
+  const nom = t.find(x => !GRADE.test(x) && !POSTES.has(x.toUpperCase()));
+  const postes = t.filter(x => POSTES.has(x.toUpperCase())).map(x => x.toUpperCase());
+  const base = nom && !/mod[ée]rateur|admin/i.test(nom) ? nom : (secours || nom || String(brut || "?"));
+  return [base, ...postes].join("/");
+}
+const utilisateur = it => { const u = it.member?.user || it.user || {}; const secours = u.global_name || u.username || ""; return { id: u.id, pseudo: pseudoPropre(it.member?.nick || secours, secours) }; };
 const option = (it, n) => (it.data.options || []).find(o => o.name === n)?.value;
 
 /* ------------------------------------------------------------ interactions */
@@ -185,6 +196,11 @@ async function interaction(it, env, ctx) {
   if (it.type === 3) { // bouton ou menu
     const [k, sid, rep] = String(it.data.custom_id).split(":");
     if (k === "d") {
+      const em0 = it.message?.embeds?.[0]; const tsSess = Number((String(em0?.description || "").match(/<t:(\d+):/) || [])[1] || 0) * 1000;
+      if (tsSess && Date.now() >= tsSess) {
+        ctx.waitUntil(fermerDispos(env, sid, it.channel_id, it.message.id, em0).catch(e => console.log("fermeture", e.message)));
+        return json({ type: T.MESSAGE, data: { content: "⏰ Les dispos sont fermées : l'heure de la session est passée.", flags: EPHEMERE } });
+      }
       ctx.waitUntil((async () => {
         try {
           const r = await gs(env, "dispo", { session: sid, user, rep });
@@ -222,7 +238,27 @@ function embedClassement(r) {
 }
 
 /* ------------------------------------------------------------ tâches planifiées */
+/* Bloque les boutons d'un message de dispos (et marque la session fermée dans le Sheet). */
+export async function fermerDispos(env, sid, salon, message, embed) {
+  const e = embed ? { ...embed, footer: { text: "🔒 Dispos fermées · l'heure de la session est passée" } } : undefined;
+  await rest(env, "PATCH", `/channels/${salon}/messages/${message}`, { ...(e ? { embeds: [e] } : {}), components: boutonsDispo(sid, true) });
+  await gs(env, "session_statut", { id: sid, statut: "fermée" }).catch(() => {});
+}
+/* Sessions dont l'heure vient de passer : on ferme leurs dispos (vérifié à chaque passage, 6 h max après l'heure). */
+async function fermerSessionsPassees(env) {
+  const r = await gs(env, "sessions"); const now = Date.now(); let n = 0;
+  for (const s of r.sessions || []) {
+    const ts = lireDate(s.date); if (!ts || ts > now || now - ts > 6 * 3600e3) continue;
+    const e = (await gs(env, "session", { id: s.id })).etat; const ss = e?.session;
+    if (!ss || ss.statut !== "ouverte" || !ss.salon || !ss.message) continue;
+    await rest(env, "PATCH", `/channels/${ss.salon}/messages/${ss.message}`, { embeds: [{ ...embedDispo({ ...e, session: { ...ss, statut: "fermée" } }), footer: { text: "🔒 Dispos fermées · l'heure de la session est passée" } }], components: boutonsDispo(s.id, true) });
+    await gs(env, "session_statut", { id: s.id, statut: "fermée" }); n++;
+  }
+  return n;
+}
+
 export async function taches(env) {
+  await fermerSessionsPassees(env).catch(e => console.log("fermeture sessions", e.message));
   const r = await gs(env, "taches");
   for (const c of r.compos) {
     try {
@@ -264,6 +300,11 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (req.method === "GET") return new Response("Bot Wolfs en ligne ✅", { headers: { "content-type": "text/plain; charset=utf-8" } });
+    if (url.pathname === "/bulletin" && req.method === "POST") {
+      if (!env.CLE || req.headers.get("x-cle") !== env.CLE) return new Response("Clé invalide", { status: 401 });
+      try { return json(await posterBulletin(env, await req.json().catch(() => ({})))); }
+      catch (e) { return json({ ok: false, erreur: e.message }, 500); }
+    }
     if (url.pathname !== "/interactions" || req.method !== "POST") return new Response("Introuvable", { status: 404 });
     const body = await req.text();
     if (!(await signatureOk(req, body, env.DISCORD_PUBLIC_KEY))) return new Response("Signature invalide", { status: 401 });
@@ -274,3 +315,32 @@ export default {
   },
   async scheduled(_ev, env, ctx) { ctx.waitUntil(taches(env).catch(e => console.log("tâches", e.message))); }
 };
+
+/* ------------------------------------------------------------ bulletin de la semaine */
+const ECUSSON = "https://eafc24.content.easports.com/fifa/fltOnlineAssets/24B23FDE-7835-41C2-87A2-F453DFDB2E82/2024/fcweb/crests/256x256/l99160204.png";
+export function messageBulletin(b) {
+  const v = b.v || 0, d = b.d || 0;
+  const lignes = [`**${v}V · ${b.n || 0}N · ${d}D** sur ${b.matchs} match${b.matchs > 1 ? "s" : ""} · ${b.bp || 0} buts pour, ${b.bc || 0} contre`];
+  if (b.joueur) lignes.push(`🏆 Joueur de la semaine : **${nomCourt(b.joueur.n)}** (${Number(b.joueur.note).toFixed(2)})`);
+  if (b.records?.length) lignes.push(`🔥 ${b.records.length} record${b.records.length > 1 ? "s" : ""} du club battu${b.records.length > 1 ? "s" : ""}`);
+  if (b.mvp?.length) lignes.push(`🗳️ MVP votés par l'équipe : ${b.mvp.map(x => `<@${x.id}> ×${x.nb}`).join(" · ")}`);
+  return {
+    flags: 1 << 15, allowed_mentions: { parse: [] },
+    components: [{ type: 17, accent_color: v > d ? VERT : d > v ? ROUGE : AMBRE, components: [
+      { type: 9, components: [{ type: 10, content: `## 📰 Bulletin de la semaine\n-# X2RUE PLK WOLfS · du ${b.debut} au ${b.fin}` }], accessory: { type: 11, media: { url: ECUSSON } } },
+      { type: 12, items: [{ media: { url: "attachment://bulletin.png" }, description: `Bulletin du ${b.debut} au ${b.fin}` }] },
+      { type: 10, content: lignes.join("\n") },
+      { type: 14, divider: true, spacing: 1 },
+      { type: 10, content: "-# Bulletin automatique chaque lundi matin · tout le détail dans Wolfs Vestiaire" }
+    ] }]
+  };
+}
+export async function posterBulletin(env, o = {}) {
+  const r = await gs(env, "bulletin", o.fin ? { fin: o.fin } : {}); const b = r.bulletin;
+  if (!b || !b.matchs) return { ok: true, matchs: 0, debut: b?.debut, fin: b?.fin, diag: b?.diag };
+  const salon = o.salon || env.SALON_BULLETIN; if (!salon) throw new Error("aucun salon pour le bulletin");
+  const { png } = await import("./png.js");
+  const img = await png(bulletinSVG(b));
+  const m = await rest(env, "POST", `/channels/${salon}/messages`, messageBulletin(b), [{ nom: "bulletin.png", data: img }]);
+  return { ok: true, matchs: b.matchs, message: m?.id };
+}
