@@ -291,7 +291,7 @@ def bulletin():
         print("::error::Bulletin indisponible (script du Sheet à jour ?) :", str(rep)[:300]); sys.exit(1)
     b = rep["bulletin"]
     if not b.get("matchs"):
-        print(f"::notice::Aucun match du {b['debut']} au {b['fin']} : pas de bulletin."); return
+        print(f"::notice::Aucun match du {b['debut']} au {b['fin']} : pas de bulletin. Diagnostic : {b.get('diag', 'script du Sheet sans diagnostic')}"); return
     if os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
         poster_bot(os.environ["DISCORD_SALON"], [embed_bulletin(b)])
         print(f"::notice::Bulletin posté par le bot dans le salon {os.environ['DISCORD_SALON']} ({b['matchs']} matchs)")
