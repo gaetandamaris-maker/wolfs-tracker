@@ -288,17 +288,17 @@ def bulletin():
     with urllib.request.urlopen(req, timeout=90) as r:
         rep = json.loads(r.read().decode("utf-8"))
     if not rep.get("ok") or "bulletin" not in rep:
-        print("Bulletin indisponible (script du Sheet à jour ?) :", rep); sys.exit(1)
+        print("::error::Bulletin indisponible (script du Sheet à jour ?) :", str(rep)[:300]); sys.exit(1)
     b = rep["bulletin"]
     if not b.get("matchs"):
-        print(f"Aucun match du {b['debut']} au {b['fin']} : pas de bulletin."); return
+        print(f"::notice::Aucun match du {b['debut']} au {b['fin']} : pas de bulletin."); return
     if os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
         poster_bot(os.environ["DISCORD_SALON"], [embed_bulletin(b)])
-        print("Posté par le bot dans le salon", os.environ["DISCORD_SALON"])
+        print(f"::notice::Bulletin posté par le bot dans le salon {os.environ['DISCORD_SALON']} ({b['matchs']} matchs)")
     elif os.environ.get("DISCORD_WEBHOOK"):
-        discord([embed_bulletin(b)])
+        discord([embed_bulletin(b)]); print("::notice::Bulletin posté via le webhook DISCORD_WEBHOOK (DISCORD_TOKEN absent)")
     else:
-        print("Ni webhook ni salon du bot configuré : bulletin non posté."); sys.exit(1)
+        print("::error::Ni bot ni webhook configuré : bulletin non posté."); sys.exit(1)
     print(f"Bulletin posté : {b['matchs']} match(s) du {b['debut']} au {b['fin']}")
 
 
@@ -421,7 +421,10 @@ def poster_bot(salon, embeds):
     req = urllib.request.Request(f"https://discord.com/api/v10/channels/{salon}/messages", data=json.dumps({"embeds": embeds[:10]}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": "Bot " + os.environ["DISCORD_TOKEN"],
                                           "User-Agent": "DiscordBot (https://github.com/gaetandamaris-maker/wolfs-tracker, 1.0)"})
-    urllib.request.urlopen(req, timeout=20).read()
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+    except urllib.error.HTTPError as e:
+        print(f"::error::Discord a refusé le bulletin ({e.code}) : {e.read().decode('utf-8', 'replace')[:300]}"); sys.exit(1)
 
 
 def charger_etat():
