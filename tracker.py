@@ -292,10 +292,11 @@ def bulletin():
     b = rep["bulletin"]
     if not b.get("matchs"):
         print(f"Aucun match du {b['debut']} au {b['fin']} : pas de bulletin."); return
-    if os.environ.get("DISCORD_WEBHOOK"):
-        discord([embed_bulletin(b)])
-    elif os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
+    if os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_SALON"):
         poster_bot(os.environ["DISCORD_SALON"], [embed_bulletin(b)])
+        print("Posté par le bot dans le salon", os.environ["DISCORD_SALON"])
+    elif os.environ.get("DISCORD_WEBHOOK"):
+        discord([embed_bulletin(b)])
     else:
         print("Ni webhook ni salon du bot configuré : bulletin non posté."); sys.exit(1)
     print(f"Bulletin posté : {b['matchs']} match(s) du {b['debut']} au {b['fin']}")
