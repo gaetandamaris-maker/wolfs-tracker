@@ -95,7 +95,7 @@ function tableauStats(stats) {
   if (!stats || !stats.length) return null;
   return "```\n" + stats.slice(0, 8).map(s => `${court(s.ea, 16).padEnd(16)} ${s.note.toFixed(2)}  ${String(s.b).padStart(2)}B ${String(s.pd).padStart(2)}PD${s.hdm ? " ⭐" + s.hdm : ""}`).join("\n") + "\n```";
 }
-export function messageVote(etat, stats, fin, nbVotes = 0) {
+export function messageVote(etat, stats, fin, nbVotes = 0, ouvreur = "") {
   const parEA = new Map((stats || []).map(s => [s.ea, s]));
   const cands = etat.present.slice(0, 25);
   const embed = {
@@ -105,7 +105,8 @@ export function messageVote(etat, stats, fin, nbVotes = 0) {
     footer: { text: `🗳️ ${nbVotes} vote${nbVotes > 1 ? "s" : ""}` }
   };
   const components = cands.length ? [{ type: 1, components: [{ type: 3, custom_id: `v:${etat.session.id}`, placeholder: "Mon MVP de la soirée…", min_values: 1, max_values: 1,
-    options: cands.map(c => ({ label: court(nomCourt(c.pseudo), 100), value: c.id, description: court(ligneStats(parEA.get(c.ea)) || (c.ea ? "EA : " + c.ea : "Pas de stats EA liées"), 100) })) }] }] : [];
+    options: cands.map(c => ({ label: court(nomCourt(c.pseudo), 100), value: c.id, description: court(ligneStats(parEA.get(c.ea)) || (c.ea ? "EA : " + c.ea : "Pas de stats EA liées"), 100) })) }] },
+    { type: 1, components: [{ type: 2, style: 2, label: "Clôturer le vote", emoji: { name: "🔒" }, custom_id: `vc:${etat.session.id}:${ouvreur}` }] }] : [];
   return { embeds: [embed], components };
 }
 function embedCompo(c) {
@@ -161,7 +162,7 @@ async function interaction(it, env, ctx) {
         try {
           const r = await gs(env, "vote_ouvrir", { minutes: option(it, "minutes") || 10 });
           if (!r.etat.present.length) { await editerReponse(env, it.token, { content: `Personne n'est noté présent pour **${r.etat.session.titre}** : impossible d'ouvrir le vote.` }); return; }
-          const m = await editerReponse(env, it.token, messageVote(r.etat, r.stats, r.fin, 0));
+          const m = await editerReponse(env, it.token, messageVote(r.etat, r.stats, r.fin, 0, user.id));
           await gs(env, "vote_message", { session: r.etat.session.id, message: m.id, salon: it.channel_id });
         } catch (e) { await editerReponse(env, it.token, { content: "⚠️ " + e.message }).catch(() => {}); }
       })());
@@ -211,6 +212,19 @@ async function interaction(it, env, ctx) {
       const vite = dispoInstantanee(it.message?.embeds?.[0], user.pseudo, rep);
       return json(vite ? { type: T.UPDATE, data: { embeds: [vite], components: it.message.components } } : { type: T.DEFER_UPDATE });
     }
+    if (k === "vc") {
+      const ouvreur = rep;
+      if (user.id !== ouvreur && !peutGerer(it)) return json({ type: T.MESSAGE, data: { content: "🔒 Seul celui qui a ouvert le vote (ou un admin / modo) peut le clôturer.", flags: EPHEMERE } });
+      ctx.waitUntil((async () => {
+        try {
+          const v = await gs(env, "vote_resultat", { session: sid });
+          if (!v.session) throw new Error(v.erreur || "session introuvable");
+          v.session.salon = v.session.salon || it.channel_id; v.session.voteMsg = it.message?.id || v.session.voteMsg;
+          await annoncerVote(env, v, user.pseudo);
+        } catch (e) { await suivi(env, it.token, { content: "⚠️ " + e.message, flags: EPHEMERE }).catch(() => {}); }
+      })());
+      return json({ type: T.DEFER_UPDATE });
+    }
     if (k === "v") {
       const pour = it.data.values?.[0];
       ctx.waitUntil((async () => {
@@ -257,6 +271,22 @@ async function fermerSessionsPassees(env) {
   return n;
 }
 
+/* Fin du vote : on retire le menu et on annonce le MVP (à l'heure prévue, ou quand on clôture à la main). */
+export async function annoncerVote(env, v, par = "") {
+  const s = v.session; if (!s.salon) return;
+  if (s.voteMsg) await rest(env, "PATCH", `/channels/${s.salon}/messages/${s.voteMsg}`, { components: [] }).catch(() => {});
+  const med = ["🥇", "🥈", "🥉"]; const cl = v.classement;
+  const gagnants = cl.filter(x => cl.length && x.voix === cl[0].voix);
+  await rest(env, "POST", `/channels/${s.salon}/messages`, {
+    content: gagnants.length ? `🏆 ${gagnants.map(g => `<@${g.id}>`).join(" et ")} ${gagnants.length > 1 ? "sont élus MVP" : "est élu MVP"} de **${s.titre}** !` : `Vote MVP terminé pour **${s.titre}** : aucun vote.`,
+    embeds: cl.length ? [{ title: "Résultat du vote", color: OR, description: cl.slice(0, 5).map((x, i) => `${med[i] || `**${i + 1}.**`} ${nomCourt(x.pseudo)} — ${x.voix} voix`).join("\n"), fields: tableauStats(v.stats) ? [{ name: "📊 Stats EA de la soirée", value: tableauStats(v.stats) }] : [], footer: { text: `${v.total} vote${v.total > 1 ? "s" : ""}${par ? " · vote clôturé par " + nomCourt(par) : ""}` } }] : [],
+    allowed_mentions: { users: gagnants.map(g => g.id) },
+    ...(s.voteMsg ? { message_reference: { message_id: s.voteMsg, fail_if_not_exists: false } } : {})
+  });
+}
+const PERM_GESTION = (1n << 3n) | (1n << 5n) | (1n << 13n); // administrateur, gérer le serveur, gérer les messages
+const peutGerer = it => { try { return (BigInt(it.member?.permissions || "0") & PERM_GESTION) !== 0n; } catch (_) { return false; } };
+
 export async function taches(env) {
   if (new Date().getUTCMinutes() % 10 < 2) await fermerSessionsPassees(env).catch(e => console.log("fermeture sessions", e.message)); // toutes les 10 min suffit : les boutons se bloquent déjà d'eux-mêmes
   const r = await gs(env, "taches");
@@ -279,20 +309,7 @@ export async function taches(env) {
       await rest(env, "POST", `/channels/${rp.salon}/messages`, { content: parts.join("\n"), allowed_mentions: { users: [...rp.manquants, ...rp.indecis].slice(0, 100) }, ...(rp.message ? { message_reference: { message_id: rp.message, fail_if_not_exists: false } } : {}) });
     } catch (e) { console.log("rappel", e.message); }
   }
-  for (const v of r.votes) {
-    try {
-      const s = v.session; if (!s.salon) continue;
-      if (s.voteMsg) await rest(env, "PATCH", `/channels/${s.salon}/messages/${s.voteMsg}`, { components: [] }).catch(() => {});
-      const med = ["🥇", "🥈", "🥉"]; const cl = v.classement;
-      const gagnants = cl.filter(x => cl.length && x.voix === cl[0].voix);
-      await rest(env, "POST", `/channels/${s.salon}/messages`, {
-        content: gagnants.length ? `🏆 ${gagnants.map(g => `<@${g.id}>`).join(" et ")} ${gagnants.length > 1 ? "sont élus MVP" : "est élu MVP"} de **${s.titre}** !` : `Vote MVP terminé pour **${s.titre}** : aucun vote.`,
-        embeds: cl.length ? [{ title: "Résultat du vote", color: OR, description: cl.slice(0, 5).map((x, i) => `${med[i] || `**${i + 1}.**`} ${nomCourt(x.pseudo)} — ${x.voix} voix`).join("\n"), fields: tableauStats(v.stats) ? [{ name: "📊 Stats EA de la soirée", value: tableauStats(v.stats) }] : [], footer: { text: `${v.total} vote${v.total > 1 ? "s" : ""}` } }] : [],
-        allowed_mentions: { users: gagnants.map(g => g.id) },
-        ...(s.voteMsg ? { message_reference: { message_id: s.voteMsg, fail_if_not_exists: false } } : {})
-      });
-    } catch (e) { console.log("vote", e.message); }
-  }
+  for (const v of r.votes) { try { await annoncerVote(env, v); } catch (e) { console.log("vote", e.message); } }
   return { compos: r.compos.length, rappels: r.rappels.length, votes: r.votes.length };
 }
 

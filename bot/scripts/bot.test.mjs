@@ -138,3 +138,26 @@ test("nuit calme : pas de ping entre 23h et 9h (heure de Paris)", () => {
   assert.equal(nuitCalme(Date.UTC(2026, 9, 28, 21, 59)), false);  // 22h59 Paris
   assert.equal(nuitCalme(Date.UTC(2026, 6, 15, 21, 0)), true);    // 23h00 Paris (été)
 });
+
+test("vote MVP : bouton Clôturer (ouvreur ou modo seulement)", async () => {
+  const etat = { session: { id: "s1", titre: "VFT" }, present: [{ id: "u1", pseudo: "Choco", ea: "" }], absent: [], indecis: [] };
+  const m = messageVote(etat, [], Date.now() + 6e5, 0, "u1");
+  assert.equal(m.components[1].components[0].custom_id, "vc:s1:u1");
+  // quelqu'un d'autre, sans droits : refusé
+  let c = ctx(); appels.length = 0;
+  let r = await worker.fetch(await req({ type: 3, token: "T5", channel_id: "chan", member: { nick: "Kiki", permissions: "0", user: { id: "u2" } }, message: { id: "mv" }, data: { custom_id: "vc:s1:u1" } }), env, c);
+  assert.match((await r.json()).data.content, /Seul/); await c.fini();
+  assert.ok(!appels.some(a => a.url === env.APPS_SCRIPT_URL));
+  // l'ouvreur : résultat annoncé
+  reponsesSheet.vote_resultat = { ok: true, session: { id: "s1", titre: "VFT", salon: "chan", voteMsg: "mv" }, classement: [{ id: "u1", pseudo: "Choco", voix: 2 }], total: 2, stats: [] };
+  c = ctx(); appels.length = 0;
+  r = await worker.fetch(await req({ type: 3, token: "T6", channel_id: "chan", member: { nick: "Choco", permissions: "0", user: { id: "u1" } }, message: { id: "mv" }, data: { custom_id: "vc:s1:u1" } }), env, c);
+  assert.equal((await r.json()).type, 6); await c.fini();
+  const post = appels.find(a => a.method === "POST" && a.url.endsWith("/channels/chan/messages"));
+  assert.match(JSON.parse(post.body).content, /<@u1> est élu MVP/);
+  assert.ok(appels.some(a => a.method === "PATCH" && a.url.includes("/messages/mv")));
+  // un modo (gérer les messages) peut aussi
+  c = ctx(); appels.length = 0;
+  r = await worker.fetch(await req({ type: 3, token: "T7", channel_id: "chan", member: { nick: "Modo", permissions: String(1 << 13), user: { id: "u9" } }, message: { id: "mv" }, data: { custom_id: "vc:s1:u1" } }), env, c);
+  assert.equal((await r.json()).type, 6); await c.fini();
+});
